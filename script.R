@@ -1,4 +1,17 @@
-# Carregar pacotes ----------------------------------------------------------------------------
+
+# - -----------------------------------------------------------------------
+# Competição DSA de Machine Learning - Edição Dezembro/2019
+# Autor: Fellipe Gomes
+# blog: gomesfellipe@github.io
+# repositorios publicos: github.com/gomesfellipe
+# 
+# Referencias:
+#   - http://topepo.github.io/caret/index.html
+#   - https://bradleyboehmke.github.io/HOML
+# - -----------------------------------------------------------------------
+
+# Carregar pacotes --------------------------------------------------------
+
 library(readr)
 library(dplyr)
 library(purrr)
@@ -12,8 +25,10 @@ registerDoParallel(cl)
 
 # Leitura dados de treino
 train <- read_csv(file = "dataset_treino.csv")
+test_id <- read_csv(file = "dataset_teste.csv")$ID
+test <- read_csv(file = "dataset_teste.csv")
 
-# AED -----------------------------------------------------------------------------------------
+# AED --------------------------------------------------------------------
 
 # summary(train$v50)
 # hist(train$v50)
@@ -53,7 +68,26 @@ train <-
          v85 < 15, v88 < 15, v9 > 0,  v9 < 20, v90 > 0,  v90 < 2.5, v92 < 4, v93 > 0, 
          v93 < 15, v94 > 0, v94 < 15, v98 < 19, v98 > 0, v99 < 6)
 
-# Pre processamento ---------------------------------------------------------------------------
+# Data wrangling (teste)
+test <- 
+  test %>%
+  select(-ID,
+         -v112, -v113, -v12, -v125, -v128, -v129, -v13, -v19, -v22, 
+         -v23, -v25, -v3, -v32, -v33, -v34, -v38, -v41, -v43, -v46,
+         -v49, -v52, -v53, -v54, -v55, -v56, -v60, -v63, -v64, -v65,
+         -v67, -v74, -v75, -v76, -v77, -v8, -v82, -v83, -v86, -v89,
+         -v95, -v96, -v97) %>% 
+  mutate(v107 = ifelse(v107 %in% c("E", "C", "D", "B"), v107, "Z"),
+         v24 = ifelse(v24 %in% c("E", "D", "C"), v24, "Z"),
+         v30 = ifelse(v30 %in% c("C", "G", "D"), v30, "Z"),
+         v31 = ifelse(is.na(v31), "D", v31),
+         v47 = ifelse(v47 %in% c("C", "I"), v47, "Z"),
+         v71 = ifelse(v71 %in% c("F", "B", "C"), v71, "Z"),
+         v79 = ifelse(v79 %in% c("C", "B", "E"), v79, "Z"),
+         v91 = ifelse(v91 %in% c("A", "G", "C", "B"), v91, "Z")
+  )
+
+# Pre processamento -------------------------------------------------------
 
 model_recipe <- 
   recipe(target ~ ., data= train) %>% 
@@ -70,8 +104,21 @@ model_recipe <-
 pp_estimates <- prep(model_recipe, training = train, verbose = T)
 pp_data <- bake(pp_estimates, mutate_if(train, is.character, as.factor) )
 
-saveRDS(pp_data, "pp_data.rds")
-# ML ------------------------------------------------------------------------------------------
+# Pre processamento (teste)
+
+model_recipe <- 
+  recipe( ~ ., data= test) %>% 
+  step_YeoJohnson(all_numeric()) %>% 
+  step_knnimpute(all_predictors(), neighbors = 20) %>%
+  step_lincomb(all_numeric()) %>%
+  step_nzv(all_predictors()) 
+
+test_estimates <- prep(model_recipe, training = test, verbose = T)
+test_data <- bake(test_estimates, mutate_if(test, is.character, as.factor))
+
+# saveRDS(pp_data, "pp_data.rds")
+
+# ML -----------------------------------------------------------------------
 control <- trainControl(method="cv", 
                         number=3, 
                         classProbs=TRUE, 
@@ -87,28 +134,51 @@ model_glm <- train(target~.,
                    metric="logLoss",
                    trControl=control
                    )
-model_glm # logLoss 0.4991938
-saveRDS(model_glm, "model_glm.rds")
+model_glm # cv logLoss 0.4991938
+# saveRDS(model_glm, "model_glm.rds")
+data.frame(
+  ID = test_id,
+  PredictedProb = predict(model_glm, test_data, type = 'prob')$sim) %>% 
+  write.csv("sub_glm.csv", row.names = F)
+
+# GLMnet
+set.seed(7)
+model_glmnet <- train(target~.,
+                      data=pp_data,
+                      method="glmnet",
+                      metric="logLoss",
+                      tuneLength = 200,
+                      trControl=control)
+model_glmnet # cv logLoss 0.4988439
+# saveRDS(model_glmnet, "model_glmnet.rds")
+data.frame(
+  ID = test_id,
+  PredictedProb = predict(model_glmnet, test_data, type = 'prob')$sim) %>% 
+  write.csv("sub_glmnet.csv", row.names = F)
 
 # Random Forest (ranger)
 
-# grid <- expand.grid(
-#   mtry = floor(ncol(pp_data) * c(.05, .15, .25, .333, .4)),
-#   min.node.size = c(1, 3, 5, 10),
-#   splitrule = c("extratrees")
-# )
-# 
-# set.seed(7)
-# model_rf <- train(target~.,
-#                    data=pp_data,
-#                    method="ranger",
-#                    metric="logLoss",
-#                    tuneGrid=grid,
-#                    trControl=control,verbose = T)
-# 
-# model_rf2
-# ggplot(model_rf2)
+grid <- expand.grid(
+  mtry = floor(ncol(pp_data) * c(.05, .15, .25, .333, .4)),
+  min.node.size = c(1, 3, 5, 10),
+  splitrule = c("extratrees")
+)
+
+set.seed(7)
+model_rf <- train(target~.,
+                   data=pp_data,
+                   method="ranger",
+                   metric="logLoss",
+                   tuneGrid=grid,
+                   trControl=control,verbose = T)
+
+model_rf
+ggplot(model_rf)
 # saveRDS(model_rf, "model_rf.rds")
+data.frame(
+  ID = test_id,
+  PredictedProb = predict(model_rf, test_data, type = 'prob')$sim) %>% 
+  write.csv("sub_rf.csv", row.names = F)
 
 # XGBoost
 
@@ -133,14 +203,19 @@ model_xgb_baseline <- caret::train(
   verbose = TRUE
 )
 
-# Tunning
-# nrounds: Numero de arvores, default: 100
-# max_depth: Profundidade máxima da árvore, default: 6
-# eta: Taxa de Aprendizagem, default: 0.3
-# gamma: Ajustar a Regularização, default: 0
-# colsample_bytree: Amostragem em coluna, default: 1
-# min_child_weight: Peso mínimo das folhas, default: 1
-# subsample: Amostragem de linha, default: 1
+# Tunning Sequencial
+
+# -----------------+-----------------------------------------+
+# Parameto         |Descricao                                |
+# -----------------+-----------------------------------------+
+# nrounds          |Numero de arvores, default: 100          |
+# max_depth        |Profundidade máxima da árvore, default: 6|
+# eta              |Taxa de Aprendizagem, default: 0.3       |
+# gamma            |Ajustar a Regularização, default: 0      |
+# colsample_bytree |Amostragem em coluna, default: 1         |
+# min_child_weight |Peso mínimo das folhas, default: 1       |
+# subsample        |Amostragem de linha, default: 1          |
+# -----------------+-----------------------------------------+
 
 # 1 Tuning:
 # - nrouns
@@ -148,7 +223,7 @@ model_xgb_baseline <- caret::train(
 # - max_depth
 
 model_xgb_baseline # logLoss 0.5046261
-saveRDS(model_xgb_baseline, "model_xgb_baseline.rds")
+# saveRDS(model_xgb_baseline, "model_xgb_baseline.rds")
 
 nrounds <- 1000
 
@@ -173,13 +248,13 @@ model_xgb_tune <- caret::train(
 
 model_xgb_tune
 ggplot(model_xgb_tune)
-saveRDS(model_xgb_tune, "model_xgb_tune.rds")
+# saveRDS(model_xgb_tune, "model_xgb_tune.rds")
 
 # 2 Tunning
 # - min_child_weight
 
 tune_grid2 <- expand.grid(
-  nrounds = seq(from = 50, to = nrounds, by = 50),
+  nrounds = seq(from = 50, to = nrounds, by = 100),
   eta = model_xgb_tune$bestTune$eta,
   max_depth = ifelse(model_xgb_tune$bestTune$max_depth == 2,
                      c(model_xgb_tune$bestTune$max_depth:4),
@@ -201,7 +276,7 @@ model_xgb_tune2 <- caret::train(
 
 model_xgb_tune2
 ggplot(model_xgb_tune2)
-saveRDS(model_xgb_tune2, "model_xgb_tune2.rds")
+# saveRDS(model_xgb_tune2, "model_xgb_tune2.rds")
 
 # 3 Tunning
 # - colsample_bytree
@@ -228,7 +303,7 @@ model_xgb_tune3 <- caret::train(
 
 model_xgb_tune3
 ggplot(model_xgb_tune3)
-saveRDS(model_xgb_tune3, "model_xgb_tune3.rds")
+# saveRDS(model_xgb_tune3, "model_xgb_tune3.rds")
 
 # 4 Tunning 
 # - gamma
@@ -254,7 +329,7 @@ model_xgb_tune4 <- caret::train(
 
 model_xgb_tune4
 ggplot(model_xgb_tune4)
-saveRDS(model_xgb_tune4, "model_xgb_tune4.rds")
+# saveRDS(model_xgb_tune4, "model_xgb_tune4.rds")
 
 # 5 Tunning
 # - eta
@@ -280,7 +355,7 @@ model_xgb_tune5 <- caret::train(
 
 model_xgb_tune5
 ggplot(model_xgb_tune5)
-saveRDS(model_xgb_tune5, "model_xgb_tune5.rds")
+# saveRDS(model_xgb_tune5, "model_xgb_tune5.rds")
 
 # Final Model
 final_grid <- expand.grid(
@@ -306,49 +381,10 @@ model_xgb_final <- caret::train(
 
 model_xgb_final
 ggplot(model_xgb_final)
-saveRDS(model_xgb_final, "model_xgb_final.rds")
+# saveRDS(model_xgb_final, "model_xgb_final.rds")
 
-
-
-# Test --------------------------------------------------------------------
-
-test_id <- read_csv(file = "dataset_teste.csv")$ID
-
-test <- read_csv(file = "dataset_teste.csv")
-
-# Data wrangling
-test <- 
-  test %>%
-  select(-ID,
-         -v112, -v113, -v12, -v125, -v128, -v129, -v13, -v19, -v22, 
-         -v23, -v25, -v3, -v32, -v33, -v34, -v38, -v41, -v43, -v46,
-         -v49, -v52, -v53, -v54, -v55, -v56, -v60, -v63, -v64, -v65,
-         -v67, -v74, -v75, -v76, -v77, -v8, -v82, -v83, -v86, -v89,
-         -v95, -v96, -v97) %>% 
-  mutate(v107 = ifelse(v107 %in% c("E", "C", "D", "B"), v107, "Z"),
-         v24 = ifelse(v24 %in% c("E", "D", "C"), v24, "Z"),
-         v30 = ifelse(v30 %in% c("C", "G", "D"), v30, "Z"),
-         v31 = ifelse(is.na(v31), "D", v31),
-         v47 = ifelse(v47 %in% c("C", "I"), v47, "Z"),
-         v71 = ifelse(v71 %in% c("F", "B", "C"), v71, "Z"),
-         v79 = ifelse(v79 %in% c("C", "B", "E"), v79, "Z"),
-         v91 = ifelse(v91 %in% c("A", "G", "C", "B"), v91, "Z")
-  )
-
-# Pre processamento
-model_recipe <- 
-  recipe( ~ ., data= test) %>% 
-  step_YeoJohnson(all_numeric()) %>% 
-  step_knnimpute(all_predictors(), neighbors = 20) %>%
-  step_lincomb(all_numeric()) %>%
-  step_nzv(all_predictors()) 
-
-test_estimates <- prep(model_recipe, training = test, verbose = T)
-test_data <- bake(test_estimates, test)
-
-# Sub
 data.frame(
   ID = test_id,
-  PredictedProb = predict(model_xgb, test_data, type = 'prob')$sim) %>% 
-  write.csv("sub_rf_tun.csv", row.names = F)
+  PredictedProb = predict(model_xgb_final, test_data, type = 'prob')$sim) %>% 
+  write.csv("sub_xgb_final.csv", row.names = F)
 
