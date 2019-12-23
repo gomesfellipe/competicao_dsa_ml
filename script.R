@@ -36,7 +36,7 @@ test <- read_csv(file = "dataset_teste.csv")
 # boxplot(train$v50)
 # qqnorm(train$v99)
 
-# Data wrangling  ---------------------------------------------------------
+# Data wrangling (treino)
 
 train <- 
   train %>% 
@@ -68,6 +68,24 @@ train <-
          v85 < 15, v88 < 15, v9 > 0,  v9 < 20, v90 > 0,  v90 < 2.5, v92 < 4, v93 > 0, 
          v93 < 15, v94 > 0, v94 < 15, v98 < 19, v98 > 0, v99 < 6)
 
+# Pre processamento (treino)
+
+model_recipe <- 
+  recipe(target ~ ., data= train) %>% 
+  step_YeoJohnson(all_numeric()) %>% 
+  step_knnimpute(all_predictors(), neighbors = 20) %>%
+  step_lincomb(all_numeric()) %>%
+  step_nzv(all_predictors()) 
+# step_medianimpute(all_numeric()) %>%
+# step_modeimpute(all_nominal()) %>%
+# step_center(all_numeric()) %>%
+# step_scale(all_numeric()) %>%
+# step_pca(all_numeric(),threshold = 0.80)
+
+pp_estimates <- prep(model_recipe, training = train, verbose = T)
+pp_data <- bake(pp_estimates, mutate_if(train, is.character, as.factor) )
+
+
 # Data wrangling (teste)
 test <- 
   test %>%
@@ -87,25 +105,7 @@ test <-
          v91 = ifelse(v91 %in% c("A", "G", "C", "B"), v91, "Z")
   )
 
-# Pre processamento -------------------------------------------------------
-
-model_recipe <- 
-  recipe(target ~ ., data= train) %>% 
-  step_YeoJohnson(all_numeric()) %>% 
-  step_knnimpute(all_predictors(), neighbors = 20) %>%
-  step_lincomb(all_numeric()) %>%
-  step_nzv(all_predictors()) 
-# step_medianimpute(all_numeric()) %>%
-# step_modeimpute(all_nominal()) %>%
-# step_center(all_numeric()) %>%
-# step_scale(all_numeric()) %>%
-# step_pca(all_numeric(),threshold = 0.80)
-
-pp_estimates <- prep(model_recipe, training = train, verbose = T)
-pp_data <- bake(pp_estimates, mutate_if(train, is.character, as.factor) )
-
 # Pre processamento (teste)
-
 model_recipe <- 
   recipe( ~ ., data= test) %>% 
   step_YeoJohnson(all_numeric()) %>% 
@@ -117,6 +117,7 @@ test_estimates <- prep(model_recipe, training = test, verbose = T)
 test_data <- bake(test_estimates, mutate_if(test, is.character, as.factor))
 
 # saveRDS(pp_data, "pp_data.rds")
+# saveRDS(test_data, "test_data.rds")
 
 # ML -----------------------------------------------------------------------
 control <- trainControl(method="cv", 
