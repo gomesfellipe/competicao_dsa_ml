@@ -2,5 +2,5 @@
 .Rproj.user
 dataset_teste.csv
 dataset_treino.csv
-gomes555.json
+kaggle.json
 model_xgb_baseline.rds
